@@ -144,7 +144,7 @@ void cdCommand(const char* path, char *cwd) {
     }
     if (chdir(path) != 0) {
         if (debug) {
-            perror("chdir failed");
+            DebugMessage("chdir failed", true);
         }
     }
     else {
@@ -162,9 +162,7 @@ void sigCommand(const char *pidStr, int sig) {
     }
     int pid = atoi(pidStr);
     if (kill(pid, sig) == -1) {
-        if (debug) {
-            perror("Halt signal failed");
-        }
+        DebugMessage("Halt signal failed", true);
     }
 }
 
@@ -173,7 +171,7 @@ void handleRedirect(cmdLine *pCmdLine) {
         close(0);
         if (open(pCmdLine->inputRedirect, O_RDONLY) == -1) {
             if (debug) {
-                perror("Input redirection open failed");
+                DebugMessage("Input redirection open failed", true);
             }
         }
     }
@@ -181,7 +179,7 @@ void handleRedirect(cmdLine *pCmdLine) {
         close(1);
         if (open(pCmdLine->outputRedirect, O_WRONLY | O_CREAT | O_TRUNC, 0644)  == -1) {
             if (debug) {
-                perror("output redirection open failed");
+                DebugMessage("output redirection open failed", true);
             }
         }
     }
