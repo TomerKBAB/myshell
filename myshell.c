@@ -251,12 +251,18 @@ void sigCommand(const char *pidStr, int sig) {
         DebugMessage("signal failed", true);
     }
     else {
-        if (sig == SIGSTOP)
+        if (sig == SIGSTOP) {
             updateProcessStatus(process_list, pid, SUSPENDED);
-        else if (sig == SIGCONT)
+            DebugMessage("signaled STOP", false);
+        }
+        else if (sig == SIGCONT) {
             updateProcessStatus(process_list, pid, RUNNING);
-        else if (sig == SIGINT || sig == SIGTERM)
+            DebugMessage("signaled SIGCONT", false);
+        }
+        else if (sig == SIGINT) {
             updateProcessStatus(process_list, pid, TERMINATED);
+            DebugMessage("signaled SIGINT", false);
+        }
     }
 }
 
