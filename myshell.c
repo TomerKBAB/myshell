@@ -52,6 +52,7 @@ void printProcessList(process** process_list);
 void freeProcessList(process **plist);
 void updateProcessList(process **plist);
 void updateProcessStatus(process *process_list, int pid, int status);
+void removeTerminatedProcesses(process **plist);
 
 // Helpers 
 void runPipeline(cmdLine *left);
@@ -310,7 +311,6 @@ void printProcessList(process** plist) {
 
     // Header 
     printf("PID          Command      STATUS\n");
-
     // Entries
     for (process *p = *plist; p; p = p->next) {
         const char *statusStr = 
@@ -323,6 +323,31 @@ void printProcessList(process** plist) {
                p->pid,
                p->cmd->arguments[0],
                statusStr);
+    }
+
+    // Clean up the terminated processes
+    removeTerminatedProcesses(plist);
+}
+
+void removeTerminatedProcesses(process **plist) {
+    process *prev = NULL;
+    process *cur  = *plist;
+    while (cur) {
+        if (cur->status == TERMINATED) {
+            process *toDel = cur;
+            // unlink it
+            if (prev)
+                prev->next = cur->next;
+            else
+                *plist = cur->next;
+            cur = cur->next;           // advance before freeing
+            freeCmdLines(toDel->cmd);
+            free(toDel);
+        }
+        else {
+            prev = cur;
+            cur  = cur->next;
+        }
     }
 }
 
