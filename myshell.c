@@ -8,8 +8,13 @@
 #include <signal.h>
 #include <time.h>
 #include <fcntl.h>
+#include <sys/types.h>
 
 #include "LineParser.h"
+
+#define TERMINATED  -1
+#define RUNNING 1
+#define SUSPENDED 0
 
 typedef enum {
     CMD_QUIT,
@@ -17,11 +22,19 @@ typedef enum {
     CMD_HALT,
     CMD_WAKEUP,
     CMD_ICE,
+    CMD_PROCS,
     CMD_EXECUTE
 } Command;
 
-bool debug;
+typedef struct process{
+        cmdLine* cmd;                         /* the parsed command line*/
+        pid_t pid; 		                  /* the process id that is running the command*/
+        int status;                           /* status of the process: RUNNING/SUSPENDED/TERMINATED */
+        struct process *next;	                  /* next process in chain */
+    } process;
 
+bool debug;
+process *process_list = NULL;
 
 // USer Commands
 void sigCommand(const char *pidStr, int sig);
@@ -30,6 +43,11 @@ void cdCommand(const char *path, char *cwd);
 // Executers
 void execute(cmdLine *pCmdLine);
 int forkAndExec(char *path, char *const argv[], int in_fd, int out_fd);
+
+// Process
+void addProcess(process** process_list, cmdLine* cmd, pid_t pid);
+void printProcessList(process** process_list);
+void freeProcessList(process **plist);
 
 // Helpers 
 void runPipeline(cmdLine *left);
@@ -57,9 +75,10 @@ int main(int argc, char **argv) {
             continue;  // Skip to next iteration if parsing failed
         }
 
+        bool shouldFreeCmdLines = true;
         if (pCmdLine->next) {
             runPipeline(pCmdLine);
-            freeCmdLines(pCmdLine->next);
+            shouldFreeCmdLines = false;
         }
         else {
             Command cmd = getCommand(pCmdLine->arguments[0]);
@@ -79,15 +98,21 @@ int main(int argc, char **argv) {
                 case CMD_WAKEUP: 
                     sigCommand((pCmdLine->argCount > 1 ? pCmdLine->arguments[1] : NULL), SIGCONT);
                     break;
+                case CMD_PROCS:
+                    printProcessList(&process_list);
+                    break;
                 case CMD_EXECUTE:
                     execute(pCmdLine);
+                    shouldFreeCmdLines = false;
                     break;
             } 
             // Wait for child a bit
             nanosleep(&(struct timespec){0, 500000000}, NULL);
         }
-        freeCmdLines(pCmdLine);
+        if (shouldFreeCmdLines)
+            freeCmdLines(pCmdLine);
     }
+    freeProcessList(&process_list);
 }
 
 // Handle exactly two commands joined by a pipe
@@ -110,6 +135,7 @@ void runPipeline(cmdLine *left) {
         left->inputRedirect  ? open(left->inputRedirect,  O_RDONLY) : -1,
         pipefd[1]
     );
+    addProcess(&process_list, left, p1);
     DebugChild(p1, left->arguments[0]);
 
     close(pipefd[1]);
@@ -120,6 +146,7 @@ void runPipeline(cmdLine *left) {
         pipefd[0],
         right->outputRedirect ? open(right->outputRedirect, O_CREAT|O_WRONLY | O_TRUNC, 0666) : -1
     );
+    addProcess(&process_list, right, p2);
     DebugChild(p2, right->arguments[0]);
 
     // parent closes both ends
@@ -157,12 +184,13 @@ void execute(cmdLine *pCmdLine) {
             exit(EXIT_FAILURE);
         }
     }
-    // In parent, debug
-    DebugChild(pid, pCmdLine->arguments[0]);
-
-    // Set blocking
-    if(pCmdLine->blocking) {
-        waitpid(pid, NULL, 0);
+    // In parent
+    else {
+        addProcess(&process_list, pCmdLine, pid);
+        DebugChild(pid, pCmdLine->arguments[0]);
+        if(pCmdLine->blocking) {
+            waitpid(pid, NULL, 0);
+        }
     }
 }
 
@@ -178,6 +206,8 @@ Command getCommand(const char *cmd) {
         return CMD_WAKEUP;
     else if (strcmp(cmd, "ice") == 0)
         return CMD_ICE;
+    else if (strcmp(cmd, "procs") == 0)
+        return CMD_PROCS;
     else
         return CMD_EXECUTE;
 }
@@ -211,6 +241,71 @@ void sigCommand(const char *pidStr, int sig) {
     }
 }
 
+
+// ——— Process —————————————————————————————————————————————
+void addProcess(process** plist, cmdLine* cmd, pid_t pid) {
+    process *p = malloc(sizeof(process));
+    if (!p) { perror("malloc"); return; }
+    p->cmd = cmd;
+    p->pid = pid;
+    p->status = RUNNING;
+    p->next = *plist;
+    *plist = p;
+}
+
+// Update statuses by non-blocking waitpid() 
+void updateProcessList(process **plist) {
+    for (process *p = *plist; p; p = p->next) {
+        int st;
+        pid_t r = waitpid(p->pid, &st, WNOHANG|WUNTRACED);
+        if (r > 0) {
+            if (WIFEXITED(st) || WIFSIGNALED(st))
+                p->status = TERMINATED;
+            else if (WIFSTOPPED(st))
+                p->status = SUSPENDED;
+            else if (WIFCONTINUED(st))
+                p->status = RUNNING;
+        }
+        else if (r == -1) {
+            p->status = TERMINATED;
+        }
+    }
+}
+
+void printProcessList(process** plist) {
+    //Format:
+    //<index in process list> <process id> <process status> <the command together with its arguments>
+    updateProcessList(plist);
+
+    // Header 
+    printf("PID          Command      STATUS\n");
+
+    // Entries
+    for (process *p = *plist; p; p = p->next) {
+        const char *statusStr = 
+            (p->status == RUNNING)   ? "Running"    :
+            (p->status == SUSPENDED) ? "Suspended"  :
+                                       "Terminated";
+
+        // Print PID left-aligned in width 12, command in width 12, then status
+        printf("%-12d%-12s%s\n",
+               p->pid,
+               p->cmd->arguments[0],
+               statusStr);
+    }
+}
+
+// Free the list on shell exit
+void freeProcessList(process **plist) {
+    process *p = *plist;
+    while (p) {
+        process *next = p->next;
+        freeCmdLines(p->cmd);   // if you own that memory
+        free(p);
+        p = next;
+    }
+    *plist = NULL;
+}
 
 // ——— Helpers —————————————————————————————————————————————
 
