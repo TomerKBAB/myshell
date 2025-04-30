@@ -75,6 +75,7 @@ int main(int argc, char **argv) {
             continue;  // Skip to next iteration if parsing failed
         }
 
+        // we’ll free those cmdLines later in freeProcessList()
         bool shouldFreeCmdLines = true;
         if (pCmdLine->next) {
             runPipeline(pCmdLine);
@@ -106,9 +107,9 @@ int main(int argc, char **argv) {
                     shouldFreeCmdLines = false;
                     break;
             } 
-            // Wait for child a bit
-            nanosleep(&(struct timespec){0, 500000000}, NULL);
         }
+        // Wait for child a bit
+        nanosleep(&(struct timespec){0, 500000000}, NULL);
         if (shouldFreeCmdLines)
             freeCmdLines(pCmdLine);
     }
@@ -116,8 +117,13 @@ int main(int argc, char **argv) {
 }
 
 // Handle exactly two commands joined by a pipe
-void runPipeline(cmdLine *left) {
-    cmdLine *right = left->next;
+void runPipeline(cmdLine *pCmdLine) {
+    cmdLine *left  = pCmdLine;
+    cmdLine *right = pCmdLine->next;
+
+    // Detach into two one‐node lists
+    left->next  = NULL;
+    right->next = NULL;
 
     if (!validateNoRedirectConflict(left, right))
         return;
