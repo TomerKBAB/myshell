@@ -59,6 +59,7 @@ int main(int argc, char **argv) {
 
         if (pCmdLine->next) {
             runPipeline(pCmdLine);
+            freeCmdLines(pCmdLine->next);
         }
         else {
             Command cmd = getCommand(pCmdLine->arguments[0]);
@@ -84,8 +85,8 @@ int main(int argc, char **argv) {
             } 
             // Wait for child a bit
             nanosleep(&(struct timespec){0, 500000000}, NULL);
-            freeCmdLines(pCmdLine);
         }
+        freeCmdLines(pCmdLine);
     }
 }
 
