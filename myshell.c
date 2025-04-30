@@ -32,6 +32,7 @@ void execute(cmdLine *pCmdLine);
 bool shouldDebug(int agrc, char **argv);
 Command getCommand(const char *cmd);
 void handleRedirect(cmdLine *pCmdLine);
+void DebugMessage(char *message, bool sysError);
 
 
 int main(int argc, char **argv) {
@@ -90,9 +91,8 @@ void execute(cmdLine *pCmdLine) {
     int pid = fork();
     //Error in fork
     if (pid < 0) {
-        if (debug) {
-            perror("fork failed");
-        }
+        DebugMessage("fork failed", true);
+        // TODO: is it needed to free here?
         freeCmdLines(pCmdLine);
         return;
     }
@@ -100,17 +100,19 @@ void execute(cmdLine *pCmdLine) {
     if (pid == 0) {
         handleRedirect(pCmdLine);
         if(execvp(pCmdLine->arguments[0], pCmdLine->arguments) == -1) {
-            if (debug) {
-                perror("execvp failed");
-            }
+            DebugMessage("execvp failed", true);
             exit(EXIT_FAILURE);
         }
     }
     // In parent, debug
-    else if (debug) {
-        fprintf(stderr, "PID: %u\n", pid);
-        fprintf(stderr, "Command: %s\n", pCmdLine->arguments[0]);
+    if (debug) {
+        char msg[100];
+        snprintf(msg, sizeof(msg), "%s%d", "PID: ", pid);
+        DebugMessage(msg, false);
+        snprintf(msg, sizeof(msg), "%s%s", "Command: ", pCmdLine->arguments[0]);
+        DebugMessage(msg, false);
     }
+
     // Set blocking
     if(pCmdLine->blocking) {
         waitpid(pid, NULL, 0);
@@ -136,7 +138,7 @@ Command getCommand(const char *cmd) {
 void cdCommand(const char* path, char *cwd) {
     if (path == NULL) {
         if(debug) {
-            fprintf(stderr, "cd: missing operand\n");
+            DebugMessage(stderr, "cd: missing operand\n");
         }
         return;
     }
@@ -154,7 +156,7 @@ void cdCommand(const char* path, char *cwd) {
 void sigCommand(const char *pidStr, int sig) {
     if(pidStr == NULL) {
         if(debug) {
-            fprintf(stderr, "PID not provided\n");
+            DebugMessage(stderr, "PID not provided\n");
         }
         return;
     }
@@ -166,7 +168,6 @@ void sigCommand(const char *pidStr, int sig) {
     }
 }
 
-// Changes input & output streams based on user command
 void handleRedirect(cmdLine *pCmdLine) {
     if (pCmdLine->inputRedirect != NULL) {
         close(0);
@@ -183,5 +184,14 @@ void handleRedirect(cmdLine *pCmdLine) {
                 perror("output redirection open failed");
             }
         }
+    }
+}
+
+void DebugMessage(char *message, bool sysError){
+    if(debug){
+        if (sysError)
+            perror(message);
+        else
+            fprintf(stderr, "%s\n", message);
     }
 }
