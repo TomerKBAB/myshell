@@ -2,8 +2,8 @@
 .devcontainer/
 
 # Build files
-myPipe
 looper
+myPipe
 myshell
 mypipeline
 *.o
