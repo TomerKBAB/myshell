@@ -1,0 +1,14 @@
+# Ignore dev container config
+.devcontainer/
+
+# Build files
+myPipe
+looper
+myshell
+*.o
+*.out
+*.exe
+
+# Editor settings
+.vscode/
+*.log
