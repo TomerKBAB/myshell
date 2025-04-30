@@ -5,6 +5,7 @@
 myPipe
 looper
 myshell
+mypipeline
 *.o
 *.out
 *.exe
