@@ -1,3 +1,4 @@
+#define _XOPEN_SOURCE 600 // used to include WCONTINUED used for waitpid
 #include <stdio.h>
 #include <unistd.h>
 #include <linux/limits.h>
@@ -9,6 +10,7 @@
 #include <time.h>
 #include <fcntl.h>
 #include <sys/types.h>
+#include <errno.h>
 
 #include "LineParser.h"
 
@@ -48,6 +50,7 @@ int forkAndExec(char *path, char *const argv[], int in_fd, int out_fd);
 void addProcess(process** process_list, cmdLine* cmd, pid_t pid);
 void printProcessList(process** process_list);
 void freeProcessList(process **plist);
+void updateProcessList(process **plist);
 
 // Helpers 
 void runPipeline(cmdLine *left);
@@ -243,7 +246,7 @@ void sigCommand(const char *pidStr, int sig) {
     }
     int pid = atoi(pidStr);
     if (kill(pid, sig) == -1) {
-        DebugMessage("Halt signal failed", true);
+        DebugMessage("signal failed", true);
     }
 }
 
@@ -263,16 +266,18 @@ void addProcess(process** plist, cmdLine* cmd, pid_t pid) {
 void updateProcessList(process **plist) {
     for (process *p = *plist; p; p = p->next) {
         int st;
-        pid_t r = waitpid(p->pid, &st, WNOHANG|WUNTRACED);
+        // Add WCONTINUED so SIGCONT will show up as a state change
+        pid_t r = waitpid(p->pid, &st, WNOHANG | WUNTRACED | WCONTINUED);
         if (r > 0) {
             if (WIFEXITED(st) || WIFSIGNALED(st))
                 p->status = TERMINATED;
             else if (WIFSTOPPED(st))
                 p->status = SUSPENDED;
-            else if (WIFCONTINUED(st))
-                p->status = RUNNING;
+            else
+                p->status = RUNNING;  // resumed or still running
         }
-        else if (r == -1) {
+        else if (r == -1 && errno == ECHILD) {
+            // the child was reaped earlier (by your blocking wait)
             p->status = TERMINATED;
         }
     }
