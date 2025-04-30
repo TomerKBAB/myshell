@@ -69,9 +69,10 @@ int main(int argc, char **argv) {
                 break;
             case CMD_EXECUTE:
                 execute(pCmdLine);
+                // Wait for child a bit
+                nanosleep(&(struct timespec){0, 500000000}, NULL);
                 break;
         } 
-        nanosleep(&(struct timespec){0, 500000000}, NULL);
         freeCmdLines(pCmdLine);
     }
 }
@@ -92,8 +93,6 @@ void execute(cmdLine *pCmdLine) {
     //Error in fork
     if (pid < 0) {
         DebugMessage("fork failed", true);
-        // TODO: is it needed to free here?
-        freeCmdLines(pCmdLine);
         return;
     }
     // Child process execute
@@ -138,7 +137,7 @@ Command getCommand(const char *cmd) {
 void cdCommand(const char* path, char *cwd) {
     if (path == NULL) {
         if(debug) {
-            DebugMessage(stderr, "cd: missing operand\n");
+            DebugMessage("cd: missing operand", false);
         }
         return;
     }
@@ -155,9 +154,7 @@ void cdCommand(const char* path, char *cwd) {
 //sigCommand - Sends the specified signal to the process whose PID is provided by pidStr.
 void sigCommand(const char *pidStr, int sig) {
     if(pidStr == NULL) {
-        if(debug) {
-            DebugMessage(stderr, "PID not provided\n");
-        }
+        DebugMessage("PID not provided", false);
         return;
     }
     int pid = atoi(pidStr);
