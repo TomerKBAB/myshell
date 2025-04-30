@@ -51,6 +51,7 @@ void addProcess(process** process_list, cmdLine* cmd, pid_t pid);
 void printProcessList(process** process_list);
 void freeProcessList(process **plist);
 void updateProcessList(process **plist);
+void updateProcessStatus(process *process_list, int pid, int status);
 
 // Helpers 
 void runPipeline(cmdLine *left);
@@ -248,6 +249,14 @@ void sigCommand(const char *pidStr, int sig) {
     if (kill(pid, sig) == -1) {
         DebugMessage("signal failed", true);
     }
+    else {
+        if (sig == SIGSTOP)
+            updateProcessStatus(process_list, pid, SUSPENDED);
+        else if (sig == SIGCONT)
+            updateProcessStatus(process_list, pid, RUNNING);
+        else if (sig == SIGINT || sig == SIGTERM)
+            updateProcessStatus(process_list, pid, TERMINATED);
+    }
 }
 
 
@@ -274,18 +283,29 @@ void updateProcessList(process **plist) {
             else if (WIFSTOPPED(st))
                 p->status = SUSPENDED;
             else
-                p->status = RUNNING;  // resumed or still running
+                p->status = RUNNING;
         }
         else if (r == -1 && errno == ECHILD) {
-            // the child was reaped earlier (by your blocking wait)
             p->status = TERMINATED;
         }
     }
 }
 
+/**
+ * Find the process with the given pid in process_list
+ * and set its status field to the new value.
+ */
+void updateProcessStatus(process *process_list, int pid, int status) {
+    for (process *p = process_list; p; p = p->next) {
+        if (p->pid == pid) {
+            p->status = status;
+            return;
+        }
+    }
+}
+
+// Prints process List PID Command STATUS
 void printProcessList(process** plist) {
-    //Format:
-    //<index in process list> <process id> <process status> <the command together with its arguments>
     updateProcessList(plist);
 
     // Header 
