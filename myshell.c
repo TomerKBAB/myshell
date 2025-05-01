@@ -11,12 +11,14 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <ctype.h>
 
 #include "LineParser.h"
 
 #define TERMINATED  -1
 #define RUNNING 1
 #define SUSPENDED 0
+#define HISTLEN 20
 
 typedef enum {
     CMD_QUIT,
@@ -29,11 +31,22 @@ typedef enum {
 } Command;
 
 typedef struct process{
-        cmdLine* cmd;                         /* the parsed command line*/
-        pid_t pid; 		                  /* the process id that is running the command*/
-        int status;                           /* status of the process: RUNNING/SUSPENDED/TERMINATED */
-        struct process *next;	                  /* next process in chain */
-    } process;
+        cmdLine* cmd;
+        pid_t pid;
+        int status; 
+        struct process *next;
+} process;
+
+typedef struct history_entry {
+    char *cmd;
+    struct history_entry *next;
+} history_entry;
+
+typedef struct {
+    history_entry *head;
+    history_entry *tail;
+    int count;
+} history_list;
 
 bool debug;
 process *process_list = NULL;
@@ -54,6 +67,14 @@ void updateProcessList(process **plist);
 void updateProcessStatus(process *process_list, int pid, int status);
 void removeTerminatedProcesses(process **plist);
 
+// History
+void initHistory(history_list *h);
+void freeHistory(history_list *h);
+void addHistory(history_list *h, const char *cmd);
+void printHistory(const history_list *h);
+const char *getHistory(const history_list *h, int n);
+const char *getLastHistory(const history_list *h);
+
 // Helpers 
 void runPipeline(cmdLine *left);
 bool shouldDebug(int agrc, char **argv);
@@ -70,14 +91,49 @@ int main(int argc, char **argv) {
     char input[2048];
     bool quit = false;
     getcwd(cwd, PATH_MAX);
+    history_list history;
+    initHistory(&history);
     while (!quit) {
         printf("%s: ", cwd);
          if(fgets(input, 2048, stdin) == NULL) {
             break;  //EOF signal
         }
+        // Strip new line
+        input[strcspn(input, "\n")] = '\0';
+        if (input[0] == '\0')
+            continue;
+
+        // handle history built-ins on raw input
+        if (strcmp(input, "hist") == 0) {
+            printHistory(&history);
+            continue;
+        }
+        else if (strcmp(input, "!!") == 0) {
+            const char *last = getLastHistory(&history);
+            if (!last) {
+                fprintf(stderr, "No commands in history\n");
+                continue;
+            }
+            strcpy(input, last);
+            printf("%s\n", input);
+        }
+        else if (input[0] == '!' && isdigit((unsigned char)input[1])) {
+            int n = atoi(input + 1);
+            const char *cmd = getHistory(&history, n);
+            if (!cmd) {
+                fprintf(stderr, "No such command: %d\n", n);
+                continue;
+            }
+            strcpy(input, cmd);
+            printf("%s\n", input);
+        }
+
+        // record in history
+        addHistory(&history, input);
+
         cmdLine *pCmdLine = parseCmdLines(input);
         if (pCmdLine == NULL) {
-            continue;  // Skip to next iteration if parsing failed
+            continue;  // Skip to next iteration if parsing failed or empty
         }
 
         // we’ll free those cmdLines later in freeProcessList()
@@ -119,6 +175,7 @@ int main(int argc, char **argv) {
             freeCmdLines(pCmdLine);
     }
     freeProcessList(&process_list);
+    freeHistory(&history);
 }
 
 // Handle exactly two commands joined by a pipe
@@ -367,6 +424,78 @@ void freeProcessList(process **plist) {
         p = next;
     }
     *plist = NULL;
+}
+
+// ——— History —————————————————————————————————————————————
+
+// initialize to empty
+void initHistory(history_list *h) {
+    h->head = NULL;
+    h->tail = NULL;
+    h->count = 0;
+}
+
+// free all nodes & strings
+void freeHistory(history_list *h) {
+    history_entry *curr = h->head;
+    while (curr) {
+        history_entry *next = curr->next;
+        free(curr->cmd);
+        free(curr);
+        curr = next;
+    }
+    initHistory(h);
+}
+
+// add a new command, removing the oldest if full
+void addHistory(history_list *h, const char *cmd) {
+    char *copy = strdup(cmd);
+    history_entry *entry = malloc(sizeof(history_entry));
+    entry->cmd  = copy;
+    entry->next = NULL;
+
+    if (h->count == 0) {
+        h->head = entry;
+        h->tail = entry;
+        h->count = 1;
+    }
+    else {
+        h->tail->next = entry;
+        h->tail = entry;
+        if (h->count < HISTLEN) {
+            h->count++;
+        } else {
+            // remove oldest
+            history_entry *old = h->head;
+            h->head = old->next;
+            free(old->cmd);
+            free(old);
+        }
+    }
+}
+
+// print numbered history
+void printHistory(const history_list *h) {
+    history_entry *e = h->head;
+    // Stops at null entry
+    for (int i = 1; e; e = e->next, i++) {
+        printf("%2d  %s\n", i, e->cmd);
+    }
+}
+
+// get the nth (1-based) entry, or NULL
+const char *getHistory(const history_list *h, int n) {
+    if (n < 1 || n > h->count)
+        return NULL;
+    history_entry *e = h->head;
+    for (int i = 1; i < n; i++)
+        e = e->next;
+    return e ? e->cmd : NULL;
+}
+
+// get the last (most recent) entry, or NULL
+const char *getLastHistory(const history_list *h) {
+    return h->tail ? h->tail->cmd : NULL;
 }
 
 // ——— Helpers —————————————————————————————————————————————
