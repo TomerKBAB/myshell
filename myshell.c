@@ -100,6 +100,7 @@ int main(int argc, char **argv) {
         printf("%s: ", cwd);
         fflush(stdout); 
          if(fgets(input, sizeof(input), stdin) == NULL) {
+            putchar('\n');
             break;  //EOF signal
         }
 
