@@ -56,6 +56,7 @@ void sigCommand(const char *pidStr, int sig);
 void cdCommand(const char *path, char *cwd);
 
 // Executers
+void dispatchCommand(cmdLine *pCmdLine, char cwd[]);
 void execute(cmdLine *pCmdLine);
 int forkAndExec(char *path, char *const argv[], int in_fd, int out_fd);
 
@@ -74,6 +75,7 @@ void addHistory(history_list *h, const char *cmd);
 void printHistory(const history_list *h);
 const char *getHistory(const history_list *h, int n);
 const char *getLastHistory(const history_list *h);
+bool tryHistoryCommands(history_list *history, char *input);
 
 // Helpers 
 void runPipeline(cmdLine *left);
@@ -94,88 +96,44 @@ int main(int argc, char **argv) {
     history_list history;
     initHistory(&history);
     while (!quit) {
+
         printf("%s: ", cwd);
-         if(fgets(input, 2048, stdin) == NULL) {
+         if(fgets(input, sizeof(input), stdin) == NULL) {
             break;  //EOF signal
         }
+
         // Strip new line
         input[strcspn(input, "\n")] = '\0';
         if (input[0] == '\0')
             continue;
 
-        // handle history built-ins on raw input
-        if (strcmp(input, "hist") == 0) {
-            printHistory(&history);
-            continue;
-        }
-        else if (strcmp(input, "!!") == 0) {
-            const char *last = getLastHistory(&history);
-            if (!last) {
-                fprintf(stderr, "No commands in history\n");
-                continue;
-            }
-            strcpy(input, last);
-            printf("%s\n", input);
-        }
-        else if (input[0] == '!' && isdigit((unsigned char)input[1])) {
-            int n = atoi(input + 1);
-            const char *cmd = getHistory(&history, n);
-            if (!cmd) {
-                fprintf(stderr, "No such command: %d\n", n);
-                continue;
-            }
-            strcpy(input, cmd);
-            printf("%s\n", input);
-        }
+         // history handling 
+        bool skipExecution = tryHistoryCommands(&history, input);
+        if (skipExecution)
+            continue;     // either "hist" or an error in !! / !n
 
         // record in history
         addHistory(&history, input);
 
         cmdLine *pCmdLine = parseCmdLines(input);
-        if (pCmdLine == NULL) {
+        if (!pCmdLine) {
             continue;  // Skip to next iteration if parsing failed or empty
         }
 
-        // we’ll free those cmdLines later in freeProcessList()
-        bool shouldFreeCmdLines = true;
-        if (pCmdLine->next) {
-            runPipeline(pCmdLine);
-            shouldFreeCmdLines = false;
-        }
-        else {
-            Command cmd = getCommand(pCmdLine->arguments[0]);
-            switch (cmd) {
-                case CMD_QUIT:
-                    quit = true;
-                    break;
-                case CMD_CD:
-                    cdCommand((pCmdLine->argCount > 1 ? pCmdLine->arguments[1] : NULL), cwd);
-                    break;
-                case CMD_HALT:
-                    sigCommand((pCmdLine->argCount > 1 ? pCmdLine->arguments[1] : NULL), SIGSTOP);
-                    break;
-                case CMD_ICE:
-                    sigCommand((pCmdLine->argCount > 1 ? pCmdLine->arguments[1] : NULL), SIGINT);
-                    break;
-                case CMD_WAKEUP: 
-                    sigCommand((pCmdLine->argCount > 1 ? pCmdLine->arguments[1] : NULL), SIGCONT);
-                    break;
-                case CMD_PROCS:
-                    printProcessList(&process_list);
-                    break;
-                case CMD_EXECUTE:
-                    execute(pCmdLine);
-                    shouldFreeCmdLines = false;
-                    break;
-            } 
-        }
-        // Wait for child a bit
-        nanosleep(&(struct timespec){0, 500000000}, NULL);
-        if (shouldFreeCmdLines)
+        // handle quit 
+        if (getCommand(pCmdLine->arguments[0]) == CMD_QUIT) {
             freeCmdLines(pCmdLine);
+            quit = true;
+            break;
+        }
+
+        dispatchCommand(pCmdLine, cwd);
     }
+
+    // Cleanup
     freeProcessList(&process_list);
     freeHistory(&history);
+    return 0;
 }
 
 // Handle exactly two commands joined by a pipe
@@ -234,6 +192,60 @@ bool shouldDebug(int argc, char **argv) {
             return true;
     }
     return false;
+}
+
+/// Dispatch a parsed command line 
+void dispatchCommand(cmdLine *pCmdLine, char cwd[]) {
+    bool shouldFree = true;
+
+    if (pCmdLine->next) {
+        runPipeline(pCmdLine);
+        shouldFree = false;
+    }
+    else {
+        Command cmd = getCommand(pCmdLine->arguments[0]);
+        switch (cmd) {
+            case CMD_QUIT: //we'll quit in main
+                break;
+            case CMD_CD:
+                cdCommand(
+                    pCmdLine->argCount>1 ? pCmdLine->arguments[1] : NULL,
+                    cwd
+                );
+                break;
+            case CMD_HALT:
+                sigCommand(
+                    pCmdLine->argCount>1 ? pCmdLine->arguments[1] : NULL,
+                    SIGSTOP
+                );
+                break;
+            case CMD_ICE:
+                sigCommand(
+                    pCmdLine->argCount>1 ? pCmdLine->arguments[1] : NULL,
+                    SIGINT
+                );
+                break;
+            case CMD_WAKEUP:
+                sigCommand(
+                    pCmdLine->argCount>1 ? pCmdLine->arguments[1] : NULL,
+                    SIGCONT
+                );
+                break;
+            case CMD_PROCS:
+                printProcessList(&process_list);
+                break;
+            case CMD_EXECUTE:
+                execute(pCmdLine);
+                shouldFree = false;
+                break;
+            default:
+                break;
+        }
+    }
+
+    nanosleep(&(struct timespec){0, 500000000}, NULL);
+    if (shouldFree)
+        freeCmdLines(pCmdLine);
 }
 
 // executes using the path variables the command with arguemnts given.
@@ -497,6 +509,36 @@ const char *getHistory(const history_list *h, int n) {
 const char *getLastHistory(const history_list *h) {
     return h->tail ? h->tail->cmd : NULL;
 }
+
+/// Handle "hist", "!!", and "!n".  If we did handle one, returns true
+/// and leaves `input` unchanged (for "hist") or overwritten with
+/// the expanded command (for !! or  !n).
+bool tryHistoryCommands(history_list *history, char *input) {
+    if (strcmp(input, "hist") == 0) {
+        printHistory(history);
+        return true;
+    }
+    if (strcmp(input, "!!") == 0) {
+        const char *last = getLastHistory(history);
+        if (!last) { fprintf(stderr, "No commands in history\n"); return true; }
+        char *suffix = input + 2;
+        snprintf(input, 2048, "%s%s", last, suffix);
+        printf("%s\n", input);
+        return false;  // we will execute the expanded line
+    }
+    if (input[0]=='!' && isdigit((unsigned char)input[1])) {
+        char *p = input + 1;
+        while (isdigit((unsigned char)*p)) p++;
+        int idx = atoi(input+1);
+        const char *cmd = getHistory(history, idx);
+        if (!cmd) { fprintf(stderr, "No such command: %d\n", idx); return true; }
+        snprintf(input, 2048, "%s%s", cmd, p);
+        printf("%s\n", input);
+        return false;
+    }
+    return false;
+}
+
 
 // ——— Helpers —————————————————————————————————————————————
 
