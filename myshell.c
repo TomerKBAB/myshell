@@ -75,7 +75,7 @@ void addHistory(history_list *h, const char *cmd);
 void printHistory(const history_list *h);
 const char *getHistory(const history_list *h, int n);
 const char *getLastHistory(const history_list *h);
-bool tryHistoryCommands(history_list *history, char *input);
+bool expandHistoryLine(history_list *history, char *input);
 
 // Helpers 
 void runPipeline(cmdLine *left);
@@ -107,10 +107,9 @@ int main(int argc, char **argv) {
         if (input[0] == '\0')
             continue;
 
-         // history handling 
-        bool skipExecution = tryHistoryCommands(&history, input);
-        if (skipExecution)
-            continue;     // either "hist" or an error in !! / !n
+         // history handling- expand every !n or !! anywhere in the line
+        if (expandHistoryLine(&history, input))
+            continue;    // handled hist or error
 
         // record in history
         addHistory(&history, input);
@@ -510,32 +509,73 @@ const char *getLastHistory(const history_list *h) {
     return h->tail ? h->tail->cmd : NULL;
 }
 
-/// Handle "hist", "!!", and "!n".  If we did handle one, returns true
-/// and leaves `input` unchanged (for "hist") or overwritten with
-/// the expanded command (for !! or  !n).
-bool tryHistoryCommands(history_list *history, char *input) {
+
+// Returns true if we handled a “hist” command (so caller should continue),
+// or false if input has been rewritten (or left alone) and should be executed.
+bool expandHistoryLine(history_list *history, char *input) {
+    // Handle “hist” as a special case
     if (strcmp(input, "hist") == 0) {
         printHistory(history);
         return true;
     }
-    if (strcmp(input, "!!") == 0) {
-        const char *last = getLastHistory(history);
-        if (!last) { fprintf(stderr, "No commands in history\n"); return true; }
-        char *suffix = input + 2;
-        snprintf(input, 2048, "%s%s", last, suffix);
-        printf("%s\n", input);
-        return false;  // we will execute the expanded line
+
+    // Build the expanded line in this buffer
+    char buffer[2048];
+    int  w = 0;        // write index into buffer
+    char *r = input;   // read pointer into input
+
+    // iterate over every char in input
+    while (*r && w < (int)sizeof(buffer) - 1) {
+        //  !!
+        if (r[0]=='!' && r[1]=='!') {
+            const char *h = getLastHistory(history);
+            if (!h) {
+                fprintf(stderr, "No commands in history\n");
+                return true;  // skip execution
+            }
+            // copy the entire h into buffer
+            for (const char *p = h; *p && w < (int)sizeof(buffer)-1; p++)
+                buffer[w++] = *p;
+            r += 2;  // advance past "!!"
+        }
+
+        // !n
+        else if (r[0]=='!' && isdigit((unsigned char)r[1])) {
+            // read the number
+            int n = 0;
+            char *q = r + 1;
+            while (isdigit((unsigned char)*q)) {
+                n = n * 10 + (*q - '0');
+                q++;
+            }
+            const char *h = getHistory(history, n);
+            if (!h) {
+                fprintf(stderr, "No such command: %d\n", n);
+                return true;
+            }
+            // copy that history entry
+            for (const char *p = h; *p && w < (int)sizeof(buffer)-1; p++)
+                buffer[w++] = *p;
+            r = q;  // advance past !n
+        }
+
+        // everything else, just copy one character
+        else {
+            buffer[w++] = *r++;
+        }
     }
-    if (input[0]=='!' && isdigit((unsigned char)input[1])) {
-        char *p = input + 1;
-        while (isdigit((unsigned char)*p)) p++;
-        int idx = atoi(input+1);
-        const char *cmd = getHistory(history, idx);
-        if (!cmd) { fprintf(stderr, "No such command: %d\n", idx); return true; }
-        snprintf(input, 2048, "%s%s", cmd, p);
+
+    // NUL-terminate
+    buffer[w] = '\0';
+
+    // If nothing changed, just leave input alone.
+    //    If it did change—or if it contained !! or !n—we overwrite.
+    if (strcmp(buffer, input) != 0) {
+        strcpy(input, buffer);
         printf("%s\n", input);
-        return false;
     }
+
+    //  false -> caller should parse and execute the new input
     return false;
 }
 
