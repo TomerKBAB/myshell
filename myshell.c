@@ -98,6 +98,7 @@ int main(int argc, char **argv) {
     while (!quit) {
 
         printf("%s: ", cwd);
+        fflush(stdout); 
          if(fgets(input, sizeof(input), stdin) == NULL) {
             break;  //EOF signal
         }
@@ -178,9 +179,10 @@ void runPipeline(cmdLine *pCmdLine) {
     close(pipefd[0]);
 
     // wait for both
-    // TODO: do i need to check blocking here (&)?
-    waitpid(p1, NULL, 0);
-    waitpid(p2, NULL, 0);
+    if (left->blocking) {
+        waitpid(p1, NULL, 0);
+        waitpid(p2, NULL, 0);
+    }
 }
 
 // Iterates through user arguments, returns true if the prgoram should
@@ -618,8 +620,8 @@ int forkAndExec(char *path, char *const argv[],
     int pid = fork();
     if (pid == 0) {
         // child
-        if (in_fd  != -1) { close(STDIN_FILENO);  dup(in_fd);  }
-        if (out_fd != -1) { close(STDOUT_FILENO); dup(out_fd); }
+        if (in_fd  != -1) { close(STDIN_FILENO);  dup(in_fd); close(in_fd); }
+        if (out_fd != -1) { close(STDOUT_FILENO); dup(out_fd); close(out_fd); }
         // close any pipe FDs inherited
         // (we assume parent will close its copies)
         execvp(path, argv);
