@@ -1,10 +1,4 @@
-all: myshell looper myPipe mypipeline
-
-myPipe: myPipe.c
-	gcc -Wall -g -o myPipe myPipe.c
-
-looper: looper.c
-	gcc -Wall -g -o looper looper.c
+all: myshell mypipeline
 
 myshell: LineParser.o myshell.o
 	gcc -Wall -g -o myshell LineParser.o myshell.o
@@ -19,4 +13,4 @@ mypipeline: mypipeline.c
 	gcc -Wall -g -o mypipeline mypipeline.c
 
 clean:
-	rm -r myshell.o LineParser.o myshell looper myPipe mypipeline
+	rm -r myshell.o LineParser.o myshell mypipeline
