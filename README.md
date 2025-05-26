@@ -74,6 +74,6 @@ gcc -std=gnu99 -D_XOPEN_SOURCE=600 -Wall -Wextra -o mysh main.c LineParser.c
 
 Tomer R.
 
-GitHub: [https://github.com/yourusername](https://github.com/yourusername)
+GitHub: [https://github.com/yourusername](https://github.com/TomerKBAB)
 
 Feel free to fork, improve, and submit issues or pull requests!
